@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Optional: add project base styles here */
+html, body, #root {
+	height: 100%;
+}
+
+body {
+	background-color: #ffffff;
+	color: #1f2937; /* text-gray-800 */
+}
