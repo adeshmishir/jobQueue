@@ -1,8 +1,9 @@
 import IORedis from "ioredis";
+import dotenv from "dotenv";
 
-const connection = new IORedis({
-  host: "localhost",
-  port: 6379,
+dotenv.config();
+
+const connection = new IORedis(process.env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 });
