@@ -17,68 +17,39 @@ app.get("/", (req, res) => {
   res.json({ message: "Hello, World!" });
 });
 
-app.get("/jobs", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT *
-      FROM jobs
-      ORDER BY created_at DESC
-    `);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.log(error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch jobs",
-    });
-  }
-});
-
-app.get("/jobs/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
-      "SELECT * FROM jobs WHERE id = $1",
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Job not found",
-      });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.log(error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch job",
-    });
-  }
-});
+// NOTE: routes for listing/getting jobs are defined below (no duplicates)
 app.post("/jobs", async (req, res) => {
   const { type, payload } = req.body;
 
   const id = uuidv4();
 
   // 1. Save in DB first
+  // Ensure payload is valid JSON text for the JSON column.
+  let parsedPayload = payload;
+  if (typeof payload === "string") {
+    try {
+      parsedPayload = JSON.parse(payload);
+    } catch (e) {
+      // leave as string - we'll store it as a JSON string below
+      parsedPayload = payload;
+    }
+  }
+
+  const dbPayload = JSON.stringify(parsedPayload === undefined ? null : parsedPayload);
+
   await pool.query(
     "INSERT INTO jobs (id, type, payload, status) VALUES ($1, $2, $3, $4)",
-    [id, type, payload, "PENDING"]
+    [id, type, dbPayload, "PENDING"]
   );
 
   // 2. Push to queue
   await jobQueue.add(
-  "job",
-  {
-    id,
-    type,
-    payload,
-  },
+    "job",
+    {
+      id,
+      type,
+      payload: parsedPayload,
+    },
   {
     attempts: 3,
     backoff: {
