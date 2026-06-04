@@ -1,62 +1,101 @@
 import { Worker } from "bullmq";
+import { pathToFileURL } from "url";
 import connection from "./config/redisConnection.js";
 import pool from "./config/db.js";
 
-const worker = new Worker(
-  "jobs",
-  async (job) => {
-    const { id, type, payload } = job.data;
+let workerInstance;
 
-    console.log("Processing job:", job.data);
+function createWorker() {
+  if (workerInstance) {
+    return workerInstance;
+  }
 
-    // Mark as processing
-    await pool.query(
-      "UPDATE jobs SET status = $1 WHERE id = $2",
-      ["PROCESSING", id]
-    );
+  workerInstance = new Worker(
+    "jobs",
+    async (job) => {
+      const { id, type } = job.data;
 
-    // Simulate failure
-    if (type === "fail") {
-      await pool.query(
-        "UPDATE jobs SET status = $1 WHERE id = $2",
-        ["FAILED", id]
-      );
+      console.log("Processing job:", job.data);
 
-      throw new Error("Intentional failure");
-    }
+      await pool.query("UPDATE jobs SET status = $1 WHERE id = $2", [
+        "PROCESSING",
+        id,
+      ]);
 
-    // Simulate work
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (type === "fail") {
+        await pool.query("UPDATE jobs SET status = $1 WHERE id = $2", [
+          "FAILED",
+          id,
+        ]);
 
-    // Mark as completed
-    await pool.query(
-      "UPDATE jobs SET status = $1 WHERE id = $2",
-      ["COMPLETED", id]
-    );
+        throw new Error("Intentional failure");
+      }
 
-    console.log(`Job ${id} completed`);
-  },
-  { connection }
-);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
-console.log("Worker is running...");
+      await pool.query("UPDATE jobs SET status = $1 WHERE id = $2", [
+        "COMPLETED",
+        id,
+      ]);
 
-worker.on("failed", async (job, err) => {
-  console.log(
-    `Job ${job?.data?.id} failed. Attempt ${job?.attemptsMade}/${job?.opts?.attempts}`
+      console.log(`Job ${id} completed`);
+    },
+    { connection }
   );
 
-  // When all retries are exhausted
-  if (job && job.attemptsMade >= job.opts.attempts) {
-    await pool.query(
-      "UPDATE jobs SET status = $1 WHERE id = $2",
-      ["FAILED", job.data.id]
+  workerInstance.on("failed", async (job) => {
+    console.log(
+      `Job ${job?.data?.id} failed. Attempt ${job?.attemptsMade}/${job?.opts?.attempts}`
     );
 
-    console.log(`Job ${job.data.id} permanently failed`);
-  }
-});
+    if (job && job.attemptsMade >= job.opts.attempts) {
+      await pool.query("UPDATE jobs SET status = $1 WHERE id = $2", [
+        "FAILED",
+        job.data.id,
+      ]);
 
-worker.on("completed", (job) => {
-  console.log(`Job ${job.data.id} completed successfully`);
-});
+      console.log(`Job ${job.data.id} permanently failed`);
+    }
+  });
+
+  workerInstance.on("completed", (job) => {
+    console.log(`Job ${job.data.id} completed successfully`);
+  });
+
+  workerInstance.on("error", (error) => {
+    console.error("Worker error:", error);
+  });
+
+  return workerInstance;
+}
+
+export function startWorker() {
+  const worker = createWorker();
+  console.log("Worker is initialized...");
+  return worker;
+}
+
+export async function stopWorker() {
+  if (!workerInstance) {
+    return;
+  }
+
+  await workerInstance.close();
+  workerInstance = undefined;
+}
+
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  startWorker();
+
+  const shutdown = async (signal) => {
+    console.log(`Received ${signal}, closing worker...`);
+    await stopWorker();
+    process.exit(0);
+  };
+
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+}
