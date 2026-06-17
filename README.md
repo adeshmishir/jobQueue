@@ -1,132 +1,291 @@
 # JobQueue
 
-A distributed job queue dashboard built with **React, Vite, Node.js, BullMQ, PostgreSQL, Redis, and Docker**.
+A distributed job queue system built with React, Node.js, BullMQ, Redis, and PostgreSQL.
 
-The app lets you create jobs from the browser, watch them flow through a queue, and persist their state in PostgreSQL while workers process tasks in the background.
+The goal of this project is to understand how background processing works in real-world applications. Instead of performing time-consuming tasks directly inside API requests, jobs are pushed to a queue and processed separately by workers.
 
-## What it does
+Currently, the system supports asynchronous PDF generation, job tracking, retry handling, and file downloads through a web dashboard.
 
-- Create jobs from the dashboard
-- Process jobs asynchronously with BullMQ workers
-- Store job records in PostgreSQL
-- Use Redis as the queue backend
-- Show live job counts and recent job history in the UI
+---
 
-## Project Structure
+## Features
 
-```text
-JobQueue/
-├── backend/
-│   ├── server.js
-│   ├── worker.js
-│   └── config/
-├── frontend/
-│   └── src/
-│       ├── pages/Dashboard.jsx
-│       └── services/api.js
-└── README.md
-```
+* Create jobs from the dashboard
+* Process jobs asynchronously using BullMQ
+* Redis-backed queue management
+* PostgreSQL job persistence
+* Automatic retry mechanism for failed jobs
+* PDF generation worker using PDFKit
+* Download generated PDFs
+* Job status tracking
+* Dashboard with job statistics
+* Result storage for completed jobs
+
+---
+
+## Tech Stack
+
+### Frontend
+
+* React
+* Vite
+* Tailwind CSS
+
+### Backend
+
+* Node.js
+* Express.js
+
+### Queue & Messaging
+
+* BullMQ
+* Redis (Upstash)
+
+### Database
+
+* PostgreSQL (Neon)
+
+### File Generation
+
+* PDFKit
+
+### Development Tools
+
+* Docker
+* Git
+* GitHub
+
+---
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A[React Dashboard] --> B[Express API]
-  B --> C[Redis Queue / BullMQ]
-  C --> D[Worker]
-  D --> E[PostgreSQL]
+
+    A[React Dashboard] --> B[Express API]
+
+    B --> C[(PostgreSQL)]
+    B --> D[BullMQ Queue]
+
+    D --> E[(Redis)]
+
+    E --> F[Worker]
+
+    F --> G[PDF Generator]
+
+    G --> H[Generated PDFs]
+
+    F --> C
 ```
 
-## Requirements
+---
 
-- Node.js 18+
-- npm
-- PostgreSQL running on port `5433`
-- Redis running on port `6379`
-- Docker if you want to run the database with containers
+## How It Works
 
-## Environment
+1. A user creates a job from the dashboard.
+2. The API stores the job in PostgreSQL with status `PENDING`.
+3. The job is pushed to a BullMQ queue.
+4. Redis manages the queued jobs.
+5. A worker picks up the job and starts processing.
+6. The job status changes to `PROCESSING`.
+7. The worker generates the PDF and stores the result.
+8. The status is updated to `COMPLETED`.
+9. The generated file can be downloaded from the dashboard.
 
-The backend reads these values from `.env` when available:
+---
 
-- `PGHOST`
-- `PGPORT`
-- `PGDATABASE`
-- `PGUSER`
-- `PGPASSWORD`
-- `PORT`
+## Job Lifecycle
 
-Default values in the current setup:
-
-- `PGHOST=127.0.0.1`
-- `PGPORT=5433`
-- `PGDATABASE=jobsdb`
-- `PGUSER=admin`
-- `PGPASSWORD=admin`
-- `PORT=5000`
-
-## Setup
-
-Install dependencies in each app folder:
-
-```bash
-cd backend
-npm install
-
-cd ../frontend
-npm install
+```text
+Create Job
+    │
+    ▼
+PENDING
+    │
+    ▼
+PROCESSING
+    │
+ ┌──┴──┐
+ │     │
+ ▼     ▼
+FAILED COMPLETED
 ```
 
-If you use Docker for PostgreSQL, make sure the container is running before starting the backend.
+---
 
-## Run the app
+## Project Structure
 
-Start the backend API:
-
-```bash
-cd backend
-npm run server
+```text
+JobQueue
+│
+├── backend
+│   ├── config
+│   │   ├── db.js
+│   │   ├── queue.js
+│   │   └── redisConnection.js
+│   │
+│   ├── generated-pdfs
+│   │
+│   ├── server.js
+│   ├── worker.js
+│   ├── index.js
+│   └── .env
+│
+├── frontend
+│   └── src
+│       ├── pages
+│       ├── services
+│       └── components
+│
+└── README.md
 ```
 
-Start the worker in a separate terminal:
-
-```bash
-cd backend
-node worker.js
-```
-
-Start the frontend:
-
-```bash
-cd frontend
-npm run dev
-```
-
-If Vite reports that port `5173` is busy, it will pick another free port automatically.
+---
 
 ## API Endpoints
 
-- `GET /` - health check
-- `GET /jobs` - list all jobs
-- `GET /jobs/:id` - get a single job
-- `POST /jobs` - create a new job
+### Create Job
 
-Example request body for `POST /jobs`:
+```http
+POST /jobs
+```
+
+Example:
 
 ```json
 {
-  "type": "default",
-  "payload": { "message": "hello" }
+  "type": "generate-pdf",
+  "payload": {
+    "title": "Acknowledgement",
+    "content": "Generated using BullMQ and Redis"
+  }
 }
 ```
 
-## Troubleshooting
+### Get All Jobs
 
-- If the dashboard shows blank data, confirm the backend, worker, Redis, and PostgreSQL are all running.
-- If you see a CORS error, make sure the frontend is using the same backend host and the backend is restarted after config changes.
-- If Vite throws a cache error, delete `frontend/node_modules/.vite` and restart the dev server.
+```http
+GET /jobs
+```
 
-## Notes
+### Get Job By ID
 
-- The frontend uses Tailwind CSS v4.
-- The queue and worker code are separated so the backend can accept jobs while the worker processes them independently.
+```http
+GET /jobs/:id
+```
+
+### Download Generated PDF
+
+```http
+GET /download/:id
+```
+
+---
+
+## Example Response
+
+```json
+{
+  "id": "b8bc9c5b-f847-449c-af35-f57426e7c527",
+  "type": "generate-pdf",
+  "status": "COMPLETED",
+  "result": {
+    "fileName": "b8bc9c5b-f847-449c-af35-f57426e7c527.pdf",
+    "filePath": "generated-pdfs/b8bc9c5b-f847-449c-af35-f57426e7c527.pdf"
+  }
+}
+```
+
+---
+
+## Getting Started
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/your-username/jobqueue.git
+cd jobqueue
+```
+
+### Backend Setup
+
+```bash
+cd backend
+npm install
+```
+
+Create a `.env` file:
+
+```env
+PORT=5000
+
+DATABASE_URL=your_postgresql_connection_string
+
+REDIS_URL=your_redis_connection_string
+```
+
+Start the backend:
+
+```bash
+npm run server
+```
+```bash
+node worker.js
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## Screenshots
+
+Add screenshots of:
+
+* Dashboard
+* Job Creation Form
+* Job Status Tracking
+* PDF Download Feature
+
+---
+
+## Future Improvements
+
+* Email Queue
+* Multiple Workers
+* Dead Letter Queue (DLQ)
+* Job Priorities
+* Scheduled Jobs
+* Socket.IO Real-Time Updates
+* Worker Metrics Dashboard
+* Queue Monitoring
+* Kubernetes Deployment
+
+---
+
+## Learnings
+
+While building this project, I explored:
+
+* Background job processing
+* Queue-based architectures
+* Redis and BullMQ
+* Worker-based systems
+* Retry and failure handling
+* PostgreSQL persistence
+* Asynchronous task execution
+
+---
+
+## Author
+
+**Adesh Mishra**
+
+LinkedIn: https://www.linkedin.com/in/adesh-mishra-646ba128b/
+
+If you found this project useful, feel free to star the repository.
