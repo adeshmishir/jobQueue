@@ -2,6 +2,9 @@ import { Worker } from "bullmq";
 import { pathToFileURL } from "url";
 import connection from "./config/redisConnection.js";
 import pool from "./config/db.js";
+import PDFDocument from "pdfkit";
+import fs from "fs";
+import path from "path";
 
 let workerInstance;
 
@@ -13,7 +16,7 @@ function createWorker() {
   workerInstance = new Worker(
     "jobs",
     async (job) => {
-      const { id, type } = job.data;
+      const { id, type, payload } = job.data;
 
       console.log("Processing job:", job.data);
 
@@ -29,6 +32,54 @@ function createWorker() {
         ]);
 
         throw new Error("Intentional failure");
+      }
+
+      if (type === "generate-pdf") {
+        const { title, content } = payload || {};
+
+        const folder = path.join(process.cwd(), "generated-pdfs");
+
+        if (!fs.existsSync(folder)) {
+          fs.mkdirSync(folder);
+        }
+
+        const fileName = `${id}.pdf`;
+        const filePath = path.join(folder, fileName);
+
+        const doc = new PDFDocument();
+        const stream = fs.createWriteStream(filePath);
+
+        doc.pipe(stream);
+
+        doc.fontSize(22).text(title || "Generated PDF", {
+          align: "center",
+        });
+
+        doc.moveDown();
+        doc.fontSize(14).text(content || "No content provided");
+
+        doc.end();
+
+        await new Promise((resolve, reject) => {
+          stream.on("finish", resolve);
+          stream.on("error", reject);
+        });
+
+       await pool.query(
+  "UPDATE jobs SET status = $1, result = $2 WHERE id = $3",
+  [
+    "COMPLETED",
+    JSON.stringify({
+      fileName,
+      filePath,
+      generatedAt: new Date().toISOString(),
+    }),
+    id,
+  ]
+);
+
+        console.log(`PDF generated: ${filePath}`);
+        return;
       }
 
       await new Promise((resolve) => setTimeout(resolve, 3000));

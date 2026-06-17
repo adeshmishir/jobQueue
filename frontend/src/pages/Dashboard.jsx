@@ -50,10 +50,15 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
         <form onSubmit={submitJob} className="bg-white p-4 rounded-xl shadow max-w-2xl">
           <div className="flex gap-4 items-center mb-3">
             <label className="text-sm text-gray-600">Type</label>
-            <select value={type} onChange={(e) => setType(e.target.value)} className="border rounded p-2 bg-white">
-              <option value="default">default</option>
-              <option value="fail">fail (simulate failure)</option>
-            </select>
+           <select
+  value={type}
+  onChange={(e) => setType(e.target.value)}
+  className="border rounded p-2 bg-white"
+>
+  <option value="default">default</option>
+  <option value="generate-pdf">generate-pdf</option>
+  <option value="fail">fail (simulate failure)</option>
+</select>
             <button type="submit" disabled={loading} className="ml-auto bg-white hover:bg-gray-200 disabled:opacity-60 text-gray-800 px-4 py-2 rounded border">
               {loading ? "Submitting..." : "Create Job"}
             </button>
