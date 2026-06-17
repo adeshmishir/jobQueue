@@ -108,6 +108,7 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
                   <th className="py-3">Type</th>
                   <th className="py-3">Payload</th>
                   <th className="py-3">Status</th>
+                  <th className="py-3">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -129,6 +130,18 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
                       {job.status === 'PENDING' && <span className="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">PENDING</span>}
                       {!['COMPLETED','FAILED','PENDING'].includes(job.status) && <span className="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-800">{job.status}</span>}
                     </td>
+                    <td className="py-2 text-sm">
+  {job.status === "COMPLETED" && job.result?.filePath ? (
+    <a
+      href={`http://localhost:5000/download/${job.id}`}
+      className="px-3 py-1 rounded bg-indigo-600 text-white text-xs"
+    >
+      Download
+    </a>
+  ) : (
+    <span className="text-gray-400 text-xs">N/A</span>
+  )}
+</td>
                   </tr>
                 ))}
               </tbody>

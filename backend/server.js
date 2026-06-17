@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import fs from "fs";
 import { pathToFileURL } from "url";
 import { jobQueue } from "./config/queue.js";
 import pool from "./config/db.js";
@@ -103,6 +104,36 @@ app.get("/jobs/:id", async (req, res) => {
   } catch (error) {
     console.error("GET /jobs/:id error:", error);
     res.status(500).json({ error: "Failed to fetch job" });
+  }
+});
+
+app.get("/download/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      "SELECT result FROM jobs WHERE id = $1",
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+
+    const jobResult = result.rows[0].result;
+
+    if (!jobResult || !jobResult.filePath) {
+      return res.status(400).json({ error: "No file available" });
+    }
+
+    if (!fs.existsSync(jobResult.filePath)) {
+      return res.status(404).json({ error: "File not found on server" });
+    }
+
+    res.download(jobResult.filePath, jobResult.fileName);
+  } catch (error) {
+    console.error("GET /download/:id error:", error);
+    res.status(500).json({ error: "Failed to download file" });
   }
 });
 
