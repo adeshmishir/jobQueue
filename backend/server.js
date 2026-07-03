@@ -107,6 +107,48 @@ app.get("/jobs/:id", async (req, res) => {
   }
 });
 
+app.delete("/jobs/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM jobs WHERE id = $1", [id]);
+
+    try {
+      await jobQueue.remove(id);
+    } catch (queueError) {
+      console.warn("Unable to remove job from queue:", queueError.message);
+    }
+
+    res.json({ success: true, id });
+  } catch (error) {
+    console.error("DELETE /jobs/:id error:", error);
+    res.status(500).json({ error: "Failed to delete job" });
+  }
+});
+
+app.delete("/jobs", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT id FROM jobs");
+    const jobIds = result.rows.map((row) => row.id);
+
+    if (jobIds.length > 0) {
+      await pool.query("DELETE FROM jobs");
+
+      for (const id of jobIds) {
+        try {
+          await jobQueue.remove(id);
+        } catch (queueError) {
+          console.warn("Unable to remove job from queue:", queueError.message);
+        }
+      }
+    }
+
+    res.json({ success: true, deletedCount: jobIds.length });
+  } catch (error) {
+    console.error("DELETE /jobs error:", error);
+    res.status(500).json({ error: "Failed to delete jobs" });
+  }
+});
+
 app.get("/download/:id", async (req, res) => {
   try {
     const { id } = req.params;

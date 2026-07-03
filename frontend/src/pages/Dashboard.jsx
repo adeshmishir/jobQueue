@@ -5,12 +5,18 @@ function Dashboard() {
   const [jobs, setJobs] = useState([]);
   const [type, setType] = useState("default");
   const [payload, setPayload] = useState("");
+  const [pdfTitle, setPdfTitle] = useState("");
+  const [pdfContent, setPdfContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(10);
+  const [openMenuId, setOpenMenuId] = useState(null);
   const totalJobs = jobs.length;
-const completedJobs = jobs.filter((job) => job.status === "COMPLETED").length;
-const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
-const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
+  const completedJobs = jobs.filter((job) => job.status === "COMPLETED").length;
+  const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
+  const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
+  const displayedJobs = jobs.slice(0, visibleCount);
+  const hasMoreJobs = visibleCount < jobs.length;
 
   const fetchJobs = async () => {
     const res = await api.get("/jobs");
@@ -21,14 +27,66 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
     fetchJobs();
   }, []);
 
+  const deleteJob = async (jobId) => {
+    if (!window.confirm("Delete this task?")) {
+      return;
+    }
+
+    try {
+      await api.delete(`/jobs/${jobId}`);
+      setMessage({ type: "success", text: "Task deleted" });
+      setVisibleCount(10);
+      fetchJobs();
+    } catch (err) {
+      setMessage({ type: "error", text: err?.response?.data?.error || err.message });
+    }
+  };
+
+  const deleteAllJobs = async () => {
+    if (!window.confirm("Delete all tasks?")) {
+      return;
+    }
+
+    try {
+      await api.delete("/jobs");
+      setMessage({ type: "success", text: "All tasks deleted" });
+      setVisibleCount(10);
+      fetchJobs();
+    } catch (err) {
+      setMessage({ type: "error", text: err?.response?.data?.error || err.message });
+    }
+  };
+
+  const toggleMenu = (jobId) => {
+    setOpenMenuId((current) => (current === jobId ? null : jobId));
+  };
+
   const submitJob = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
+
+    const preparedPayload = (() => {
+      if (type === "generate-pdf") {
+        return {
+          title: pdfTitle.trim() || "Generated PDF",
+          content: pdfContent.trim() || "No content provided",
+        };
+      }
+
+      if (type === "fail") {
+        return payload.trim() || "Intentional failure request";
+      }
+
+      return payload;
+    })();
+
     try {
-      const res = await api.post("/jobs", { type, payload });
+      const res = await api.post("/jobs", { type, payload: preparedPayload });
       setMessage({ type: "success", text: `Job created: ${res.data.jobId}` });
       setPayload("");
+      setPdfTitle("");
+      setPdfContent("");
       fetchJobs();
     } catch (err) {
       setMessage({ type: "error", text: err?.response?.data?.error || err.message });
@@ -40,7 +98,7 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="mb-6">
-        <div className="rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 text-white p-6 shadow-md">
+        <div className="rounded-xl bg-linear-to-r from-indigo-600 to-indigo-500 text-white p-6 shadow-md">
           <h1 className="text-3xl font-bold">Distributed Job Queue Dashboard</h1>
           <p className="text-indigo-100 mt-1 text-sm">Monitor and create background jobs</p>
         </div>
@@ -63,10 +121,41 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
               {loading ? "Submitting..." : "Create Job"}
             </button>
           </div>
-          <div>
-            <label className="text-sm text-gray-600">Payload (JSON or text)</label>
-            <textarea value={payload} onChange={(e) => setPayload(e.target.value)} className="w-full border border-gray-200 rounded p-2 mt-1 bg-white" rows={3} />
-          </div>
+          {type === "generate-pdf" ? (
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm text-gray-600">PDF Title</label>
+                <input
+                  type="text"
+                  value={pdfTitle}
+                  onChange={(e) => setPdfTitle(e.target.value)}
+                  className="w-full border border-gray-200 rounded p-2 mt-1 bg-white"
+                  placeholder="Enter PDF title"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">PDF Content</label>
+                <textarea
+                  value={pdfContent}
+                  onChange={(e) => setPdfContent(e.target.value)}
+                  className="w-full border border-gray-200 rounded p-2 mt-1 bg-white"
+                  rows={4}
+                  placeholder="Write the content you want in the PDF"
+                />
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="text-sm text-gray-600">{type === "fail" ? "Message" : "Payload (JSON or text)"}</label>
+              <textarea
+                value={payload}
+                onChange={(e) => setPayload(e.target.value)}
+                className="w-full border border-gray-200 rounded p-2 mt-1 bg-white"
+                rows={3}
+                placeholder={type === "fail" ? "Write a message for the failed job" : "Enter text or JSON payload"}
+              />
+            </div>
+          )}
           {message && (
             <div className={`mt-3 p-2 rounded ${message.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
               {message.text}
@@ -99,7 +188,21 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
 
       <div className="mt-6">
         <div className="bg-white p-4 rounded-xl shadow">
-          <h3 className="font-semibold mb-3">Recent Jobs</h3>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
+            <div>
+              <h3 className="font-semibold">Recent Jobs</h3>
+              <p className="text-sm text-gray-500">Showing {Math.min(displayedJobs.length, jobs.length)} of {jobs.length} tasks</p>
+            </div>
+            {jobs.length > 10 && (
+              <button
+                type="button"
+                onClick={deleteAllJobs}
+                className="px-3 py-2 rounded border border-red-300 text-red-600 text-sm hover:bg-red-50"
+              >
+                Delete All
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left bg-white">
               <thead>
@@ -112,7 +215,7 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
                 </tr>
               </thead>
               <tbody>
-                {jobs.map((job, idx) => (
+                {displayedJobs.map((job, idx) => (
                   <tr key={job.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} border-t`}> 
                     <td className="py-2 text-sm text-slate-700">{job.id}</td>
                     <td className="py-2 text-sm text-slate-700">{job.type}</td>
@@ -120,7 +223,7 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
                       try {
                         const s = typeof job.payload === 'string' ? job.payload : JSON.stringify(job.payload);
                         return s.length > 80 ? s.slice(0, 77) + '...' : s;
-                      } catch (e) {
+                      } catch {
                         return String(job.payload).slice(0, 80);
                       }
                     })()}</td>
@@ -131,22 +234,66 @@ const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
                       {!['COMPLETED','FAILED','PENDING'].includes(job.status) && <span className="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-800">{job.status}</span>}
                     </td>
                     <td className="py-2 text-sm">
-  {job.status === "COMPLETED" && job.result?.filePath ? (
-    <a
-      href={`http://localhost:5000/download/${job.id}`}
-      className="px-3 py-1 rounded bg-indigo-600 text-white text-xs"
-    >
-      Download
-    </a>
-  ) : (
-    <span className="text-gray-400 text-xs">N/A</span>
-  )}
-</td>
+                      <div className="relative flex justify-end">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleMenu(job.id);
+                          }}
+                          className="rounded-full p-2 text-gray-600 hover:bg-gray-100"
+                          aria-label="More actions"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
+                          </svg>
+                        </button>
+
+                        {openMenuId === job.id && (
+                          <div className="absolute right-0 top-10 z-10 w-36 rounded-md border border-gray-200 bg-white shadow-lg">
+                            {job.status === "COMPLETED" && job.result?.filePath ? (
+                              <a
+                                href={`http://localhost:5000/download/${job.id}`}
+                                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m-8 6h8" />
+                                </svg>
+                                Download
+                              </a>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => deleteJob(job.id)}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0h10l-1 12a2 2 0 01-2 2H9a2 2 0 01-2-2L6 7z" />
+                              </svg>
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {hasMoreJobs && (
+            <div className="mt-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-gray-200" />
+              <button
+                type="button"
+                onClick={() => setVisibleCount((count) => count + 10)}
+                className="px-3 py-1 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+              >
+                Show more
+              </button>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+          )}
         </div>
       </div>
     </div>
