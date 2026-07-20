@@ -5,6 +5,7 @@ import pool from "./config/db.js";
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
+import { sendEmail } from "./services/emailService.js";
 
 let workerInstance;
 
@@ -81,6 +82,28 @@ function createWorker() {
         console.log(`PDF generated: ${filePath}`);
         return;
       }
+
+      if (type === "send-email") {
+  const { to, subject, text } = payload || {};
+
+  await sendEmail(to, subject, text);
+
+  await pool.query(
+    "UPDATE jobs SET status = $1, result = $2 WHERE id = $3",
+    [
+      "COMPLETED",
+      JSON.stringify({
+        to,
+        subject,
+        sentAt: new Date().toISOString(),
+      }),
+      id,
+    ]
+  );
+
+  console.log(`Email sent to ${to}`);
+  return;
+}
 
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
