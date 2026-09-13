@@ -224,7 +224,13 @@ DATABASE_URL=your_postgresql_connection_string
 REDIS_URL=your_redis_connection_string
 ```
 
-Start the backend:
+Start the backend (starts the Express API and the BullMQ worker together in one process):
+
+```bash
+npm start
+```
+
+For development with auto-restart:
 
 ```bash
 npm run server

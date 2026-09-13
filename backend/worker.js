@@ -2,10 +2,8 @@ import { Worker } from "bullmq";
 import { pathToFileURL } from "url";
 import connection from "./config/redisConnection.js";
 import pool from "./config/db.js";
-import PDFDocument from "pdfkit";
-import fs from "fs";
-import path from "path";
 import { sendEmail } from "./services/emailService.js";
+import { generatePdf } from "./services/pdfService.js";
 
 let workerInstance;
 
@@ -38,72 +36,46 @@ function createWorker() {
       if (type === "generate-pdf") {
         const { title, content } = payload || {};
 
-        const folder = path.join(process.cwd(), "generated-pdfs");
-
-        if (!fs.existsSync(folder)) {
-          fs.mkdirSync(folder);
-        }
-
-        const fileName = `${id}.pdf`;
-        const filePath = path.join(folder, fileName);
-
-        const doc = new PDFDocument();
-        const stream = fs.createWriteStream(filePath);
-
-        doc.pipe(stream);
-
-        doc.fontSize(22).text(title || "Generated PDF", {
-          align: "center",
+        const result = await generatePdf({
+          fileName: `${id}.pdf`,
+          title,
+          content,
         });
 
-        doc.moveDown();
-        doc.fontSize(14).text(content || "No content provided");
+        await pool.query(
+          "UPDATE jobs SET status = $1, result = $2 WHERE id = $3",
+          [
+            "COMPLETED",
+            JSON.stringify(result),
+            id,
+          ]
+        );
 
-        doc.end();
-
-        await new Promise((resolve, reject) => {
-          stream.on("finish", resolve);
-          stream.on("error", reject);
-        });
-
-       await pool.query(
-  "UPDATE jobs SET status = $1, result = $2 WHERE id = $3",
-  [
-    "COMPLETED",
-    JSON.stringify({
-      fileName,
-      filePath,
-      generatedAt: new Date().toISOString(),
-    }),
-    id,
-  ]
-);
-
-        console.log(`PDF generated: ${filePath}`);
+        console.log(`PDF generated: ${result.filePath}`);
         return;
       }
 
       if (type === "send-email") {
-  const { to, subject, text } = payload || {};
+        const { to, subject, text } = payload || {};
 
-  await sendEmail(to, subject, text);
+        await sendEmail(to, subject, text);
 
-  await pool.query(
-    "UPDATE jobs SET status = $1, result = $2 WHERE id = $3",
-    [
-      "COMPLETED",
-      JSON.stringify({
-        to,
-        subject,
-        sentAt: new Date().toISOString(),
-      }),
-      id,
-    ]
-  );
+        await pool.query(
+          "UPDATE jobs SET status = $1, result = $2 WHERE id = $3",
+          [
+            "COMPLETED",
+            JSON.stringify({
+              to,
+              subject,
+              sentAt: new Date().toISOString(),
+            }),
+            id,
+          ]
+        );
 
-  console.log(`Email sent to ${to}`);
-  return;
-}
+        console.log(`Email sent to ${to}`);
+        return;
+      }
 
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
@@ -143,9 +115,17 @@ function createWorker() {
   return workerInstance;
 }
 
-export function startWorker() {
+export async function startWorker() {
   const worker = createWorker();
-  console.log("Worker is initialized...");
+
+  try {
+    await worker.waitUntilReady();
+    console.log("BullMQ worker started");
+  } catch (error) {
+    console.error("BullMQ worker failed to start:", error);
+    throw error;
+  }
+
   return worker;
 }
 
@@ -162,7 +142,10 @@ const isDirectRun =
   process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isDirectRun) {
-  startWorker();
+  startWorker().catch((error) => {
+    console.error("Failed to start worker:", error);
+    process.exit(1);
+  });
 
   const shutdown = async (signal) => {
     console.log(`Received ${signal}, closing worker...`);

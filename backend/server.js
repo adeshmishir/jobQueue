@@ -1,12 +1,13 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import fs from "fs";
 import { pathToFileURL } from "url";
 import { jobQueue } from "./config/queue.js";
 import pool from "./config/db.js";
+import redisConnection from "./config/redisConnection.js";
 import { v4 as uuidv4 } from "uuid";
 import { startWorker, stopWorker } from "./worker.js";
+import { fileExists } from "./services/pdfService.js";
 
 dotenv.config();
 
@@ -16,7 +17,10 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
+const HOST = "0.0.0.0";
+
 let serverInstance;
+let shuttingDown = false;
 let shutdownHandlersRegistered = false;
 
 app.get("/", (req, res) => {
@@ -168,7 +172,7 @@ app.get("/download/:id", async (req, res) => {
       return res.status(400).json({ error: "No file available" });
     }
 
-    if (!fs.existsSync(jobResult.filePath)) {
+    if (!fileExists(jobResult.filePath)) {
       return res.status(404).json({ error: "File not found on server" });
     }
 
@@ -186,13 +190,13 @@ export async function startServer() {
 
   try {
     const result = await pool.query("SELECT NOW()");
-    console.log("DB Connected:", result.rows[0]);
+    console.log("Database connected:", result.rows[0].now);
   } catch (error) {
-    console.error("DB Error:", error);
+    console.error("Database error:", error);
   }
 
-  serverInstance = app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+  serverInstance = app.listen(PORT, HOST, () => {
+    console.log(`Server running on port ${PORT}`);
   });
 
   return serverInstance;
@@ -219,26 +223,50 @@ export async function stopServer() {
 
 export async function startWebService() {
   await startServer();
-  startWorker();
+  await startWorker();
 
   if (!shutdownHandlersRegistered) {
-    const shutdown = async (signal) => {
-      console.log(`Received ${signal}, shutting down web service...`);
-
-      try {
-        await stopWorker();
-        await stopServer();
-      } finally {
-        process.exit(0);
-      }
+    shutdownHandlersRegistered = true;
+    const shutdown = (signal) => {
+      handleShutdown(signal).catch((error) => {
+        console.error("Shutdown error:", error);
+      });
     };
 
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
-    shutdownHandlersRegistered = true;
   }
 
   return serverInstance;
+}
+
+async function handleShutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+
+  console.log(`Received ${signal}, shutting down...`);
+
+  const forceExitTimer = setTimeout(() => {
+    console.error("Graceful shutdown timed out, forcing exit");
+    process.exit(1);
+  }, 30000);
+  forceExitTimer.unref();
+
+  try {
+    await stopServer();
+    await stopWorker();
+    await jobQueue.close();
+    redisConnection.disconnect();
+    await pool.end();
+    console.log("Shutdown complete");
+  } catch (error) {
+    console.error("Shutdown error:", error);
+  } finally {
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  }
 }
 
 const isDirectRun =
