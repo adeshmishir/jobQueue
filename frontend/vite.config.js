@@ -11,7 +11,6 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     server: {
       proxy: {
-        '/jobs': target,
         '/download': target,
       },
     },

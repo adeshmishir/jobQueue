@@ -1,362 +1,225 @@
-import { useEffect, useState } from "react";
-import api from "../services/api";
+import { useState } from "react";
+import { Link, useOutletContext } from "react-router-dom";
+import {
+  Plus,
+  Layers,
+  Clock3,
+  LoaderCircle,
+  CheckCircle2,
+  XCircle,
+  ArrowRight,
+  Inbox,
+  FileText,
+  ListChecks,
+  Mail,
+  AlertTriangle,
+} from "lucide-react";
+import { useJobs } from "../context/JobsContext";
+import StatCard from "../components/StatCard";
+import JobStatusBadge from "../components/JobStatusBadge";
+import JobProgress, { ProgressLabel } from "../components/JobProgress";
+import JobActions from "../components/JobActions";
+import ErrorState from "../components/ErrorState";
+import EmptyState from "../components/EmptyState";
+import { CardSkeleton } from "../components/LoadingSkeleton";
+import { timeAgo, formatDuration, jobHash, typeLabel } from "../lib/format";
 
-function Dashboard() {
-  const [jobs, setJobs] = useState([]);
-  const [type, setType] = useState("default");
-  const [payload, setPayload] = useState("");
-  const [pdfTitle, setPdfTitle] = useState("");
-  const [pdfContent, setPdfContent] = useState("");
-  const [emailTo, setEmailTo] = useState("");
-  const [emailSubject, setEmailSubject] = useState("");
-  const [emailText, setEmailText] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState(null);
-  const [visibleCount, setVisibleCount] = useState(10);
-  const [openMenuId, setOpenMenuId] = useState(null);
+const TYPE_ICONS = {
+  "generate-pdf": FileText,
+  default: ListChecks,
+  "send-email": Mail,
+  fail: AlertTriangle,
+};
 
-  const totalJobs = jobs.length;
-  const completedJobs = jobs.filter((job) => job.status === "COMPLETED").length;
-  const failedJobs = jobs.filter((job) => job.status === "FAILED").length;
-  const pendingJobs = jobs.filter((job) => job.status === "PENDING").length;
-  const displayedJobs = jobs.slice(0, visibleCount);
-  const hasMoreJobs = visibleCount < jobs.length;
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
 
-  const fetchJobs = async () => {
-    const res = await api.get("/jobs");
-    setJobs(res.data);
-  };
+export function JobTypeIcon({ type, className }) {
+  const Icon = TYPE_ICONS[type] || Layers;
+  return <Icon size={15} className={className} />;
+}
 
-  useEffect(() => {
-    fetchJobs().catch((err) => {
-      setMessage({ type: "error", text: err?.response?.data?.error || err.message });
-    });
-  }, []);
-
-  const deleteJob = async (jobId) => {
-    if (!window.confirm("Delete this task?")) {
-      return;
-    }
-
-    try {
-      await api.delete(`/jobs/${jobId}`);
-      setMessage({ type: "success", text: "Task deleted" });
-      setVisibleCount(10);
-      fetchJobs();
-    } catch (err) {
-      setMessage({ type: "error", text: err?.response?.data?.error || err.message });
-    }
-  };
-
-  const deleteAllJobs = async () => {
-    if (!window.confirm("Delete all tasks?")) {
-      return;
-    }
-
-    try {
-      await api.delete("/jobs");
-      setMessage({ type: "success", text: "All tasks deleted" });
-      setVisibleCount(10);
-      fetchJobs();
-    } catch (err) {
-      setMessage({ type: "error", text: err?.response?.data?.error || err.message });
-    }
-  };
-
-  const toggleMenu = (jobId) => {
-    setOpenMenuId((current) => (current === jobId ? null : jobId));
-  };
-
-  const submitJob = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage(null);
-
-    const preparedPayload = (() => {
-      if (type === "generate-pdf") {
-        return {
-          title: pdfTitle.trim() || "Generated PDF",
-          content: pdfContent.trim() || "No content provided",
-        };
-      }
-
-      if (type === "send-email") {
-        return {
-          to: emailTo.trim(),
-          subject: emailSubject.trim() || "No subject",
-          text: emailText.trim() || "No message provided",
-        };
-      }
-
-      if (type === "fail") {
-        return payload.trim() || "Intentional failure request";
-      }
-
-      return payload;
-    })();
-
-    try {
-      const res = await api.post("/jobs", { type, payload: preparedPayload });
-      setMessage({ type: "success", text: `Job created: ${res.data.jobId}` });
-      setPayload("");
-      setPdfTitle("");
-      setPdfContent("");
-      setEmailTo("");
-      setEmailSubject("");
-      setEmailText("");
-      fetchJobs();
-    } catch (err) {
-      setMessage({ type: "error", text: err?.response?.data?.error || err.message });
-    } finally {
-      setLoading(false);
-    }
-  };
-
+function ActiveJobRow({ job }) {
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="mb-6">
-        <div className="rounded-xl bg-linear-to-r from-indigo-600 to-indigo-500 p-6 text-white shadow-md">
-          <h1 className="text-3xl font-bold">Distributed Job Queue Dashboard</h1>
-          <p className="mt-1 text-sm text-indigo-100">Monitor and create background jobs</p>
+    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+          <JobTypeIcon type={job.type} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
+            {typeLabel(job.type)}
+          </p>
+          <p className="font-mono text-xs text-slate-400 dark:text-slate-500">
+            {jobHash(job.id)} · created {timeAgo(job.created_at)}
+          </p>
         </div>
+        <JobStatusBadge status={job.status} pulse={job.status !== "COMPLETED"} />
       </div>
 
-      <div className="mb-6">
-        <form onSubmit={submitJob} className="max-w-2xl rounded-xl bg-white p-4 shadow">
-          <div className="mb-3 flex items-center gap-4">
-            <label className="text-sm text-gray-600">Type</label>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="rounded border bg-white p-2"
-            >
-              <option value="default">default</option>
-              <option value="generate-pdf">generate-pdf</option>
-              <option value="send-email">send-email</option>
-              <option value="fail">fail (simulate failure)</option>
-            </select>
-            <button
-              type="submit"
-              disabled={loading}
-              className="ml-auto rounded border bg-white px-4 py-2 text-gray-800 hover:bg-gray-200 disabled:opacity-60"
-            >
-              {loading ? "Submitting..." : "Create Job"}
-            </button>
-          </div>
-
-          {type === "generate-pdf" ? (
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm text-gray-600">PDF Title</label>
-                <input
-                  type="text"
-                  value={pdfTitle}
-                  onChange={(e) => setPdfTitle(e.target.value)}
-                  className="mt-1 w-full rounded border border-gray-200 bg-white p-2"
-                  placeholder="Enter PDF title"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">PDF Content</label>
-                <textarea
-                  value={pdfContent}
-                  onChange={(e) => setPdfContent(e.target.value)}
-                  className="mt-1 w-full rounded border border-gray-200 bg-white p-2"
-                  rows={4}
-                  placeholder="Write the content you want in the PDF"
-                />
-              </div>
-            </div>
-          ) : type === "send-email" ? (
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm text-gray-600">To</label>
-                <input
-                  type="email"
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                  className="mt-1 w-full rounded border border-gray-200 bg-white p-2"
-                  placeholder="recipient@example.com"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">Subject</label>
-                <input
-                  type="text"
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
-                  className="mt-1 w-full rounded border border-gray-200 bg-white p-2"
-                  placeholder="Subject"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">Message</label>
-                <textarea
-                  value={emailText}
-                  onChange={(e) => setEmailText(e.target.value)}
-                  className="mt-1 w-full rounded border border-gray-200 bg-white p-2"
-                  rows={4}
-                  placeholder="Write your email message"
-                />
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label className="text-sm text-gray-600">{type === "fail" ? "Message" : "Payload (JSON or text)"}</label>
-              <textarea
-                value={payload}
-                onChange={(e) => setPayload(e.target.value)}
-                className="mt-1 w-full rounded border border-gray-200 bg-white p-2"
-                rows={3}
-                placeholder={type === "fail" ? "Write a message for the failed job" : "Enter text or JSON payload"}
-              />
-            </div>
-          )}
-
-          {message && (
-            <div
-              className={`mt-3 rounded p-2 ${message.type === "success" ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}
-            >
-              {message.text}
-            </div>
-          )}
-        </form>
-      </div>
-
-      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-xl border-l-4 border-blue-500 bg-white p-5 shadow">
-          <p className="text-gray-500">Total Jobs</p>
-          <h2 className="text-3xl font-bold">{totalJobs}</h2>
-        </div>
-        <div className="rounded-xl border-l-4 border-green-500 bg-white p-5 shadow">
-          <p className="text-gray-500">Completed</p>
-          <h2 className="text-3xl font-bold text-green-700">{completedJobs}</h2>
-        </div>
-        <div className="rounded-xl border-l-4 border-red-500 bg-white p-5 shadow">
-          <p className="text-gray-500">Failed</p>
-          <h2 className="text-3xl font-bold text-red-700">{failedJobs}</h2>
-        </div>
-        <div className="rounded-xl border-l-4 border-amber-400 bg-white p-5 shadow">
-          <p className="text-gray-500">Pending</p>
-          <h2 className="text-3xl font-bold text-amber-600">{pendingJobs}</h2>
-        </div>
-      </div>
-
-      <div className="mt-6">
-        <div className="rounded-xl bg-white p-4 shadow">
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="font-semibold">Recent Jobs</h3>
-              <p className="text-sm text-gray-500">
-                Showing {Math.min(displayedJobs.length, jobs.length)} of {jobs.length} tasks
-              </p>
-            </div>
-            {jobs.length > 10 && (
-              <button
-                type="button"
-                onClick={deleteAllJobs}
-                className="rounded border border-red-300 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-              >
-                Delete All
-              </button>
-            )}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full bg-white text-left">
-              <thead>
-                <tr className="border-b text-sm text-gray-600">
-                  <th className="py-3">ID</th>
-                  <th className="py-3">Type</th>
-                  <th className="py-3">Payload</th>
-                  <th className="py-3">Status</th>
-                  <th className="py-3">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayedJobs.map((job, idx) => (
-                  <tr key={job.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-slate-50"} border-t`}>
-                    <td className="py-2 text-sm text-slate-700">{job.id}</td>
-                    <td className="py-2 text-sm text-slate-700">{job.type}</td>
-                    <td className="py-2 text-sm text-slate-700">
-                      {(() => {
-                        try {
-                          const s = typeof job.payload === "string" ? job.payload : JSON.stringify(job.payload);
-                          return s.length > 80 ? `${s.slice(0, 77)}...` : s;
-                        } catch {
-                          return String(job.payload).slice(0, 80);
-                        }
-                      })()}
-                    </td>
-                    <td className="py-2 text-sm">
-                      {job.status === "COMPLETED" && (
-                        <span className="inline-block rounded-full bg-green-100 px-2 py-1 text-xs font-semibold text-green-800">COMPLETED</span>
-                      )}
-                      {job.status === "FAILED" && (
-                        <span className="inline-block rounded-full bg-red-100 px-2 py-1 text-xs font-semibold text-red-800">FAILED</span>
-                      )}
-                      {job.status === "PENDING" && (
-                        <span className="inline-block rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">PENDING</span>
-                      )}
-                      {!['COMPLETED', 'FAILED', 'PENDING'].includes(job.status) && (
-                        <span className="inline-block rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-800">{job.status}</span>
-                      )}
-                    </td>
-                    <td className="py-2 text-sm">
-                      <div className="relative flex justify-end">
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            toggleMenu(job.id);
-                          }}
-                          className="rounded-full p-2 text-gray-600 hover:bg-gray-100"
-                          aria-label="More actions"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M10 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm0 5a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" />
-                          </svg>
-                        </button>
-
-                        {openMenuId === job.id && (
-                          <div className="absolute right-0 top-10 z-10 w-36 rounded-md border border-gray-200 bg-white shadow-lg">
-                            <button
-                              type="button"
-                              onClick={() => deleteJob(job.id)}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0h10l-1 12a2 2 0 01-2 2H9a2 2 0 01-2-2L6 7z" />
-                              </svg>
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {hasMoreJobs && (
-            <div className="mt-4 flex items-center gap-3">
-              <div className="h-px flex-1 bg-gray-200" />
-              <button
-                type="button"
-                onClick={() => setVisibleCount((count) => count + 10)}
-                className="px-3 py-1 text-sm font-medium text-indigo-600 hover:text-indigo-700"
-              >
-                Show more
-              </button>
-              <div className="h-px flex-1 bg-gray-200" />
-            </div>
+      <div>
+        <JobProgress status={job.status} />
+        <div className="mt-1.5 flex items-center justify-between">
+          <ProgressLabel status={job.status} />
+          {job.status === "COMPLETED" && (
+            <span className="text-xs text-slate-400 dark:text-slate-500">
+              Processed in {formatDuration(job.duration)}
+            </span>
           )}
         </div>
       </div>
+
+      <JobActions job={job} showDelete={false} />
     </div>
   );
 }
 
-export default Dashboard;
+export default function Dashboard() {
+  const { jobs, stats, loading, apiError, refresh } = useJobs();
+  const { openCreate, openBulk } = useOutletContext();
+
+  const activeJobs = jobs
+    .filter((j) => j.status === "PENDING" || j.status === "PROCESSING")
+    .slice(0, 4);
+  const recentCompleted = jobs
+    .filter((j) => j.status === "COMPLETED" || j.status === "FAILED")
+    .slice(0, 4);
+
+  const statCards = [
+    { label: "Total Jobs", value: stats?.total, icon: Layers, tone: "slate" },
+    { label: "Pending", value: stats?.PENDING, icon: Clock3, tone: "amber" },
+    { label: "Processing", value: stats?.PROCESSING, icon: LoaderCircle, tone: "sky" },
+    { label: "Completed", value: stats?.COMPLETED, icon: CheckCircle2, tone: "emerald" },
+    { label: "Failed", value: stats?.FAILED, icon: XCircle, tone: "rose" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            {greeting()} 👋
+          </h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Monitor and manage your background jobs.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openCreate}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500"
+          >
+            <Plus size={16} />
+            Create Job
+          </button>
+          <button
+            onClick={openBulk}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <Layers size={16} />
+            Bulk Job Demo
+          </button>
+        </div>
+      </div>
+
+      {apiError && (
+        <ErrorState
+          compact
+          onRetry={refresh}
+        />
+      )}
+
+      {loading && !stats ? (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <CardSkeleton key={i} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+          {statCards.map((c) => (
+            <StatCard key={c.label} {...c} hint={c.label === "Total Jobs" ? "All-time" : undefined} />
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Active Jobs
+            </h3>
+            <Link
+              to="/jobs"
+              className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+            >
+              View all
+              <ArrowRight size={14} />
+            </Link>
+          </div>
+          {!loading && jobs.length === 0 ? (
+            <EmptyState
+              icon={Inbox}
+              title="No jobs yet"
+              description="Create your first background job and watch it move through the queue."
+              action={
+                <button
+                  onClick={openCreate}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+                >
+                  <Plus size={15} />
+                  Create Your First Job
+                </button>
+              }
+            />
+          ) : (
+            <div className="space-y-3">
+              {activeJobs.map((job) => (
+                <ActiveJobRow key={job.id} job={job} />
+              ))}
+              {activeJobs.length === 0 && (
+                <EmptyState
+                  icon={CheckCircle2}
+                  title="Queue is clear"
+                  description="No pending or processing jobs right now."
+                />
+              )}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Recent Activity
+            </h3>
+            <Link
+              to="/jobs"
+              className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+            >
+              View all
+              <ArrowRight size={14} />
+            </Link>
+          </div>
+          {!loading && recentCompleted.length === 0 ? (
+            <EmptyState
+              icon={Inbox}
+              title="Nothing finished yet"
+              description="Completed and failed jobs will appear here."
+            />
+          ) : (
+            <div className="space-y-3">
+              {recentCompleted.map((job) => (
+                <ActiveJobRow key={job.id} job={job} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}

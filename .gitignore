@@ -5,3 +5,6 @@ backend/generated-pdfs/
 backend/.env
 .env
 .env.*
+
+*.log
+backend/npm-start.log
