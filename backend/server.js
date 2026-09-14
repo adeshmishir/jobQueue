@@ -14,7 +14,18 @@ dotenv.config();
 
 export const app = express();
 
-app.use(cors({ origin: "*" }));
+app.use(
+  cors({
+    origin: [
+      "https://job-queue-nine.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:3000",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
