@@ -9,19 +9,22 @@ import { ensureSchema } from "./config/schema.js";
 import { v4 as uuidv4 } from "uuid";
 import { startWorker, stopWorker, getWorkerStats } from "./worker.js";
 import { fileExists } from "./services/pdfService.js";
+import { initSocket, setSnapshotBuilder, broadcastSnapshot } from "./config/socket.js";
 
 dotenv.config();
 
 export const app = express();
 
+const ALLOWED_ORIGINS = [
+  "https://job-queue-nine.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:3000",
+];
+
 app.use(
   cors({
-    origin: [
-      "https://job-queue-nine.vercel.app",
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://localhost:3000",
-    ],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -66,7 +69,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-app.get("/health/detailed", async (req, res) => {
+async function getDetailedHealth() {
   const result = {};
 
   result.status = "ok";
@@ -113,7 +116,99 @@ app.get("/health/detailed", async (req, res) => {
     result.status = "degraded";
   }
 
-  res.status(result.status === "ok" ? 200 : 503).json(result);
+  return result;
+}
+
+async function getJobsList() {
+  const result = await pool.query(
+    `SELECT ${JOB_COLUMNS} FROM jobs ORDER BY created_at DESC`
+  );
+  return result.rows;
+}
+
+async function getStats() {
+  const counts = await getJobCounts();
+
+  const agg = await pool.query(
+    `SELECT
+      COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS completed,
+      COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed,
+      ROUND(AVG(EXTRACT(EPOCH FROM (processed_at - created_at)))::numeric, 2)::float AS avg_duration_seconds
+    FROM jobs`
+  );
+
+  const completed = agg.rows[0].completed || 0;
+  const failed = agg.rows[0].failed || 0;
+  const ratio = completed + failed;
+
+  const daysQuery = await pool.query(
+    `SELECT
+      to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
+      to_char(date_trunc('day', created_at), 'Dy') AS label,
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS completed,
+      COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed
+    FROM jobs
+    WHERE created_at >= (now() - interval '6 days')
+    GROUP BY date_trunc('day', created_at)
+    ORDER BY date_trunc('day', created_at)`
+  );
+
+  const dayMap = new Map();
+  for (const row of daysQuery.rows) {
+    dayMap.set(row.day, row);
+  }
+
+  const last7Days = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - i);
+
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const label = date.toLocaleDateString("en-US", { weekday: "short" });
+    const existing = dayMap.get(key);
+
+    last7Days.push({
+      day: key,
+      label,
+      total: existing?.total ?? 0,
+      completed: existing?.completed ?? 0,
+      failed: existing?.failed ?? 0,
+    });
+  }
+
+  return {
+    ...counts,
+    total:
+      counts.PENDING + counts.PROCESSING + counts.COMPLETED + counts.FAILED,
+    successRate: ratio > 0 ? Number(((completed / ratio) * 100).toFixed(1)) : 0,
+    avgDurationSeconds:
+      agg.rows[0].avg_duration_seconds !== null
+        ? agg.rows[0].avg_duration_seconds
+        : 0,
+    last7Days,
+  };
+}
+
+async function buildSnapshot() {
+  const [jobs, stats, health] = await Promise.all([
+    getJobsList(),
+    getStats(),
+    getDetailedHealth(),
+  ]);
+
+  return { jobs, stats, health };
+}
+
+app.get("/health/detailed", async (req, res) => {
+  try {
+    const result = await getDetailedHealth();
+    res.status(result.status === "ok" ? 200 : 503).json(result);
+  } catch (error) {
+    console.error("GET /health/detailed error:", error);
+    res.status(500).json({ error: "Failed to fetch system health" });
+  }
 });
 
 app.post("/jobs", async (req, res) => {
@@ -162,6 +257,8 @@ app.post("/jobs", async (req, res) => {
 
     await jobQueue.add("job", { id, type, payload: parsedPayload }, options);
 
+    await broadcastSnapshot();
+
     res.json({
       success: true,
       jobId: id,
@@ -174,68 +271,7 @@ app.post("/jobs", async (req, res) => {
 
 app.get("/jobs/stats", async (req, res) => {
   try {
-    const counts = await getJobCounts();
-
-    const agg = await pool.query(
-      `SELECT
-        COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS completed,
-        COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed,
-        ROUND(AVG(EXTRACT(EPOCH FROM (processed_at - created_at)))::numeric, 2)::float AS avg_duration_seconds
-      FROM jobs`
-    );
-
-    const completed = agg.rows[0].completed || 0;
-    const failed = agg.rows[0].failed || 0;
-    const ratio = completed + failed;
-
-    const daysQuery = await pool.query(
-      `SELECT
-        to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day,
-        to_char(date_trunc('day', created_at), 'Dy') AS label,
-        COUNT(*)::int AS total,
-        COUNT(*) FILTER (WHERE status = 'COMPLETED')::int AS completed,
-        COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed
-      FROM jobs
-      WHERE created_at >= (now() - interval '6 days')
-      GROUP BY date_trunc('day', created_at)
-      ORDER BY date_trunc('day', created_at)`
-    );
-
-    const dayMap = new Map();
-    for (const row of daysQuery.rows) {
-      dayMap.set(row.day, row);
-    }
-
-    const last7Days = [];
-    for (let i = 6; i >= 0; i -= 1) {
-      const date = new Date();
-      date.setHours(0, 0, 0, 0);
-      date.setDate(date.getDate() - i);
-
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-      const label = date.toLocaleDateString("en-US", { weekday: "short" });
-      const existing = dayMap.get(key);
-
-      last7Days.push({
-        day: key,
-        label,
-        total: existing?.total ?? 0,
-        completed: existing?.completed ?? 0,
-        failed: existing?.failed ?? 0,
-      });
-    }
-
-    res.json({
-      ...counts,
-      total:
-        counts.PENDING + counts.PROCESSING + counts.COMPLETED + counts.FAILED,
-      successRate: ratio > 0 ? Number(((completed / ratio) * 100).toFixed(1)) : 0,
-      avgDurationSeconds:
-        agg.rows[0].avg_duration_seconds !== null
-          ? agg.rows[0].avg_duration_seconds
-          : 0,
-      last7Days,
-    });
+    res.json(await getStats());
   } catch (error) {
     console.error("GET /jobs/stats error:", error);
     res.status(500).json({ error: "Failed to fetch job stats" });
@@ -244,10 +280,7 @@ app.get("/jobs/stats", async (req, res) => {
 
 app.get("/jobs", async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT ${JOB_COLUMNS} FROM jobs ORDER BY created_at DESC`
-    );
-    res.json(result.rows);
+    res.json(await getJobsList());
   } catch (error) {
     console.error("GET /jobs error:", error);
     res.status(500).json({ error: "Failed to fetch jobs" });
@@ -315,6 +348,8 @@ app.post("/jobs/:id/retry", async (req, res) => {
       }
     );
 
+    await broadcastSnapshot();
+
     res.json({ success: true, jobId: id, status: "PENDING" });
   } catch (error) {
     console.error("POST /jobs/:id/retry error:", error);
@@ -332,6 +367,8 @@ app.delete("/jobs/:id", async (req, res) => {
     } catch (queueError) {
       console.warn("Unable to remove job from queue:", queueError.message);
     }
+
+    await broadcastSnapshot();
 
     res.json({ success: true, id });
   } catch (error) {
@@ -356,6 +393,8 @@ app.delete("/jobs", async (req, res) => {
         }
       }
     }
+
+    await broadcastSnapshot();
 
     res.json({ success: true, deletedCount: jobIds.length });
   } catch (error) {
@@ -410,6 +449,9 @@ export async function startServer() {
   serverInstance = app.listen(PORT, HOST, () => {
     console.log(`Server running on port ${PORT}`);
   });
+
+  initSocket(serverInstance, ALLOWED_ORIGINS);
+  setSnapshotBuilder(buildSnapshot);
 
   return serverInstance;
 }

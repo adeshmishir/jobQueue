@@ -267,7 +267,6 @@ Add screenshots of:
 * Dead Letter Queue (DLQ)
 * Job Priorities
 * Scheduled Jobs
-* Socket.IO Real-Time Updates
 * Worker Metrics Dashboard
 * Queue Monitoring
 * Kubernetes Deployment

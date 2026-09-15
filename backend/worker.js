@@ -4,6 +4,7 @@ import connection from "./config/redisConnection.js";
 import pool from "./config/db.js";
 import { sendEmail } from "./services/emailService.js";
 import { generatePdf } from "./services/pdfService.js";
+import { broadcastSnapshot } from "./config/socket.js";
 
 let workerInstance;
 
@@ -34,6 +35,8 @@ function createWorker() {
           "UPDATE jobs SET status = 'PROCESSING', started_at = COALESCE(started_at, now()), updated_at = now() WHERE id = $1",
           [id]
         );
+
+        await broadcastSnapshot();
 
         if (type === "fail") {
           await pool.query(
@@ -121,6 +124,8 @@ function createWorker() {
         [job.data.id, job.attemptsMade]
       );
     }
+
+    await broadcastSnapshot();
   });
 
   workerInstance.on("completed", (job) => {
@@ -128,6 +133,9 @@ function createWorker() {
       workerStats.processed += 1;
     }
     console.log(`Job ${job.data.id} completed successfully`);
+    broadcastSnapshot().catch((error) => {
+      console.error("broadcastSnapshot error:", error);
+    });
   });
 
   workerInstance.on("error", (error) => {

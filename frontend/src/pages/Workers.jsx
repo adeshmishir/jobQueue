@@ -115,7 +115,7 @@ export default function Workers() {
             Updating live
           </span>
           <span className="text-slate-400 dark:text-slate-500">
-            · last poll {updatedAgo} (every 4s)
+            · updated {updatedAgo}
           </span>
         </div>
         <div className="flex items-center gap-2">
